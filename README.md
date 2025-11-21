@@ -1,5 +1,5 @@
 
-# Swagger MCP Server (V2)
+# Swagger MCP Server
 
 这是一个功能强大的 MCP (Model Context Protocol) 服务器，能够将任意 Swagger/OpenAPI 文档转化为 AI 可理解、可调用的工具集。它不仅支持文档查询，还支持**接口调试**、**代码生成**和**cURL 命令构建**。
 
