@@ -1,0 +1,24 @@
+{
+  "name": "swagger-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for querying Swagger/OpenAPI documentation",
+  "type": "module",
+  "bin": {
+    "swagger-mcp-server": "./build/index.js"
+  },
+  "scripts": {
+    "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
+    "start": "node build/index.js",
+    "dev": "ts-node src/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.6.0",
+    "axios": "^1.6.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.0",
+    "ts-node": "^10.9.2"
+  }
+}
