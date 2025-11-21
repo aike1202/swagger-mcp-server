@@ -1,16 +1,31 @@
 {
-  "name": "swagger-mcp-server",
-  "version": "1.0.0",
-  "description": "MCP server for querying Swagger/OpenAPI documentation",
+  "name": "@aike1202/swagger-mcp-server",
+  "version": "2.0.0",
+  "description": "A Model Context Protocol (MCP) server that turns any Swagger/OpenAPI documentation into AI-callable tools.",
   "type": "module",
   "bin": {
-    "swagger-mcp-server": "./build/index.js"
+    "swagger-mcp": "./build/index.js"
   },
+  "files": [
+    "build"
+  ],
   "scripts": {
     "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
     "start": "node build/index.js",
-    "dev": "ts-node src/index.ts"
+    "dev": "ts-node src/index.ts",
+    "prepublishOnly": "npm run build"
   },
+  "keywords": [
+    "mcp",
+    "swagger",
+    "openapi",
+    "ai",
+    "llm",
+    "agent",
+    "tools"
+  ],
+  "author": "",
+  "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^0.6.0",
     "axios": "^1.6.0",
