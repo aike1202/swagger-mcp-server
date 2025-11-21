@@ -5,9 +5,24 @@ import { SwaggerDoc } from "../types/swagger.js";
 export class SwaggerLoader {
   private services: Map<string, string> = new Map();
   private cache: Map<string, SwaggerDoc> = new Map();
+  private authToken: string | null = null;
+  private credentials: { user: string; pass: string; loginPath?: string } | null = null;
 
   constructor() {
     this.parseArgs();
+  }
+
+  public setAuthToken(token: string) {
+    this.authToken = token;
+    console.error(`[Auth] Token cached successfully.`);
+  }
+
+  public getAuthToken(): string | null {
+    return this.authToken;
+  }
+
+  public getCredentials() {
+      return this.credentials;
   }
 
   private parseArgs() {
@@ -19,7 +34,18 @@ export class SwaggerLoader {
     }
 
     for (const arg of args) {
-      if (arg.includes("=")) {
+      if (arg.startsWith("auth=")) {
+          // Format: auth=user:pass OR auth=/login/path:user:pass
+          const val = arg.substring(5);
+          const parts = val.split(":");
+          if (parts.length === 2) {
+              this.credentials = { user: parts[0], pass: parts[1] };
+              console.error(`[Auth] Credentials loaded for user: ${parts[0]}`);
+          } else if (parts.length === 3) {
+              this.credentials = { loginPath: parts[0], user: parts[1], pass: parts[2] };
+              console.error(`[Auth] Auto-login configured. Path: ${parts[0]}, User: ${parts[1]}`);
+          }
+      } else if (arg.includes("=")) {
         const [name, url] = arg.split("=", 2);
         this.services.set(name, url);
         console.error(`Registered service '${name}': ${url}`);
@@ -67,11 +93,30 @@ export class SwaggerLoader {
         doc = response.data;
         this.cache.set(name, doc);
       } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        throw new McpError(
-          ErrorCode.InternalError,
-          `Failed to fetch Swagger docs for '${name}': ${msg}. Please ensure the service at ${docUrl} is running.`
-        );
+        // Retry with 127.0.0.1 if localhost failed (Node 17+ IPv6 issue)
+        if (docUrl.includes("localhost") && (error as any).code === "EACCES" || (error as any).code === "ECONNREFUSED") {
+            try {
+                const ipv4Url = docUrl.replace("localhost", "127.0.0.1");
+                console.error(`Retrying with 127.0.0.1: ${ipv4Url}...`);
+                const response = await axios.get(ipv4Url);
+                doc = response.data;
+                this.cache.set(name, doc);
+                // Update service url to avoid future errors
+                this.services.set(name, ipv4Url);
+            } catch (retryError) {
+                 const msg = error instanceof Error ? error.message : String(error);
+                 throw new McpError(
+                  ErrorCode.InternalError,
+                  `Failed to fetch Swagger docs for '${name}': ${msg}. Please ensure the service at ${docUrl} is running.`
+                );
+            }
+        } else {
+            const msg = error instanceof Error ? error.message : String(error);
+            throw new McpError(
+              ErrorCode.InternalError,
+              `Failed to fetch Swagger docs for '${name}': ${msg}. Please ensure the service at ${docUrl} is running.`
+            );
+        }
       }
     }
 

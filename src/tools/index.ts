@@ -136,8 +136,9 @@ export function registerTools(server: Server, loader: SwaggerLoader) {
       }
 
       case "search_apis": {
-        const query = String(args.query).toLowerCase();
-        const matches: string[] = [];
+        const query = String(args.query).toLowerCase().trim();
+        const terms = query.split(/\s+/).filter(t => t.length > 0);
+        const matches: { text: string; score: number }[] = [];
         const servicesToSearch = serviceNameArg ? [serviceNameArg] : Array.from(loader.getServices().keys());
 
         for (const sName of servicesToSearch) {
@@ -148,14 +149,43 @@ export function registerTools(server: Server, loader: SwaggerLoader) {
                       const summary = (details.summary || "").toLowerCase();
                       const description = (details.description || "").toLowerCase();
                       const pathLower = path.toLowerCase();
-                      if (pathLower.includes(query) || summary.includes(query) || description.includes(query)) {
-                          matches.push(`[${sName}] [${method.toUpperCase()}] ${path} - ${details.summary || "No summary"}`);
+                      
+                      let score = 0;
+                      let matchedTermCount = 0;
+
+                      for (const term of terms) {
+                          let termScore = 0;
+                          if (pathLower.includes(term)) termScore += 10; // Path match is most important
+                          if (summary.includes(term)) termScore += 5;    // Summary match is important
+                          if (description.includes(term)) termScore += 1; // Description match is bonus
+                          
+                          if (termScore > 0) {
+                              score += termScore;
+                              matchedTermCount++;
+                          }
+                      }
+
+                      // Only include if at least one term matched
+                      // Bonus points for matching multiple terms (AND logic preference)
+                      if (score > 0) {
+                          score += matchedTermCount * 20; 
+                          matches.push({
+                              text: `[${sName}] [${method.toUpperCase()}] ${path} - ${details.summary || "No summary"}`,
+                              score
+                          });
                       }
                   }
               }
            } catch (e) { console.error(`Skipping search for ${sName}`, e); }
         }
-        return { content: [{ type: "text", text: matches.length > 0 ? matches.join("\n") : "No matching APIs found." }] };
+
+        // Sort by score descending
+        matches.sort((a, b) => b.score - a.score);
+        
+        // Limit results to avoid context overflow
+        const topMatches = matches.slice(0, 50).map(m => m.text);
+
+        return { content: [{ type: "text", text: topMatches.length > 0 ? topMatches.join("\n") : "No matching APIs found." }] };
       }
 
       case "get_endpoint_details": {
@@ -204,6 +234,13 @@ export function registerTools(server: Server, loader: SwaggerLoader) {
 
         const { doc, baseUrl } = await loader.getDoc(serviceNameArg);
         
+        // 1. Inject Auth Token if available
+        const cachedToken = loader.getAuthToken();
+        if (cachedToken && !headers["Authorization"]) {
+            headers["Authorization"] = `Bearer ${cachedToken}`;
+            // console.error(`[AutoAuth] Injected cached token.`);
+        }
+
         // Auto-fill
         if (["post", "put", "patch"].includes(method)) {
             const pathObj = doc.paths[path];
@@ -233,38 +270,106 @@ export function registerTools(server: Server, loader: SwaggerLoader) {
         }
         const url = `${baseUrl}${finalUrl}`;
 
-        try {
-            const response = await axios({
-                method,
-                url,
-                params: queryParams,
-                headers: { "Content-Type": "application/json", ...headers },
-                data: body
-            });
+            try {
+                const response = await axios({
+                    method,
+                    url,
+                    params: queryParams,
+                    headers: { "Content-Type": "application/json", ...headers },
+                    data: body
+                });
 
-            return {
-                content: [{
-                    type: "text",
-                    text: JSON.stringify({
-                        status: response.status,
-                        statusText: response.statusText,
-                        headers: response.headers,
-                        data: response.data
-                    }, null, 2)
-                }]
-            };
-        } catch (error) {
-            if (error instanceof AxiosError) {
-                 return {
+                // 2. Capture Token from response (Heuristic)
+                if (response.data && typeof response.data === "object") {
+                    const tokenCandidate = response.data.token || response.data.accessToken || response.data.access_token || response.headers["authorization"];
+                    if (tokenCandidate && typeof tokenCandidate === "string") {
+                        const rawToken = tokenCandidate.replace(/^Bearer\s+/i, "");
+                        if (rawToken.length > 20) {
+                            loader.setAuthToken(rawToken);
+                        }
+                    }
+                }
+
+                return {
                     content: [{
                         type: "text",
-                        text: `Request Failed:\nStatus: ${error.response?.status} ${error.response?.statusText}\nData: ${JSON.stringify(error.response?.data, null, 2)}\nMessage: ${error.message}`
-                    }],
-                    isError: true
+                        text: JSON.stringify({
+                            status: response.status,
+                            statusText: response.statusText,
+                            headers: response.headers,
+                            data: response.data
+                        }, null, 2)
+                    }]
                 };
+            } catch (error) {
+                // Handle 401 Auto-Login Logic
+                if (axios.isAxiosError(error) && error.response?.status === 401) {
+                    const creds = loader.getCredentials();
+                    if (creds) {
+                        if (creds.loginPath) {
+                             // Option B: Fully Automatic Login (if path is known)
+                             try {
+                                 console.error(`[AutoAuth] 401 detected. Attempting auto-login to ${creds.loginPath}...`);
+                                 // Construct login URL (relative to base)
+                                 const loginUrl = `${baseUrl}${creds.loginPath}`;
+                                 // Guess payload format (standard or simple)
+                                 const loginBody = { username: creds.user, password: creds.pass }; 
+                                 
+                                 const loginRes = await axios.post(loginUrl, loginBody);
+                                 // Extract token
+                                 const tokenCandidate = loginRes.data?.token || loginRes.data?.accessToken || loginRes.data?.access_token;
+                                 if (tokenCandidate) {
+                                     const newToken = tokenCandidate.replace(/^Bearer\s+/i, "");
+                                     loader.setAuthToken(newToken);
+                                     
+                                     // Retry Original Request
+                                     console.error(`[AutoAuth] Login success. Retrying original request...`);
+                                     headers["Authorization"] = `Bearer ${newToken}`;
+                                     const retryRes = await axios({
+                                        method,
+                                        url,
+                                        params: queryParams,
+                                        headers: { "Content-Type": "application/json", ...headers },
+                                        data: body
+                                     });
+                                     
+                                     return {
+                                        content: [{
+                                            type: "text",
+                                            text: JSON.stringify({
+                                                status: retryRes.status,
+                                                data: retryRes.data
+                                            }, null, 2)
+                                        }]
+                                    };
+                                 }
+                             } catch (loginErr) {
+                                 console.error(`[AutoAuth] Auto-login failed: ${loginErr}`);
+                             }
+                        } else {
+                            // Option A: Hint AI to login
+                             return {
+                                content: [{
+                                    type: "text",
+                                    text: `Request failed with 401 Unauthorized.\n\n💡 TIP: I have stored credentials (User: ${creds.user}). You can attempt to login by calling the appropriate login endpoint (e.g., POST /auth/login) with these credentials, and I will automatically cache the token for future requests.`
+                                }],
+                                isError: true
+                            };
+                        }
+                    }
+                }
+
+                if (error instanceof AxiosError) {
+                     return {
+                        content: [{
+                            type: "text",
+                            text: `Request Failed:\nStatus: ${error.response?.status} ${error.response?.statusText}\nData: ${JSON.stringify(error.response?.data, null, 2)}\nMessage: ${error.message}`
+                        }],
+                        isError: true
+                    };
+                }
+                throw error;
             }
-            throw error;
-        }
       }
 
       case "generate_interface": {
