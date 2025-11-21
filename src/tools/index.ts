@@ -75,19 +75,6 @@ export function registerTools(server: Server, loader: SwaggerLoader) {
         }
       },
       {
-        name: "generate_interface",
-        description: "Generate TypeScript interfaces.",
-        inputSchema: {
-            type: "object",
-            properties: {
-                service_name: { type: "string" },
-                path: { type: "string" },
-                method: { type: "string" }
-            },
-            required: ["path", "method"]
-        }
-      },
-      {
         name: "generate_curl",
         description: "Generate a cURL command string.",
         inputSchema: {
@@ -370,39 +357,6 @@ export function registerTools(server: Server, loader: SwaggerLoader) {
                 }
                 throw error;
             }
-      }
-
-      case "generate_interface": {
-        const path = String(args.path);
-        const method = String(args.method).toLowerCase();
-        const { doc } = await loader.getDoc(serviceNameArg);
-
-        const pathObj = doc.paths[path];
-        if (!pathObj) throw new McpError(ErrorCode.InvalidParams, `Path not found`);
-        const methodObj = pathObj[method];
-        if (!methodObj) throw new McpError(ErrorCode.InvalidParams, `Method not found`);
-
-        let reqCode = "";
-        if (methodObj.requestBody) {
-            const resolvedBody = resolveSchema(methodObj.requestBody, doc);
-            const schema = resolvedBody.content?.["application/json"]?.schema;
-            if (schema) reqCode = `export interface Request {\n${jsonSchemaToTs(schema).replace(/^{|}$/g, "")}}`;
-        }
-
-        let resCode = "";
-        const successRes = methodObj.responses?.["200"] || methodObj.responses?.["201"];
-        if (successRes) {
-            const resolvedRes = resolveSchema(successRes, doc);
-            const schema = resolvedRes.content?.["application/json"]?.schema;
-            if (schema) resCode = `export interface Response {\n${jsonSchemaToTs(schema).replace(/^{|}$/g, "")}}`;
-        }
-
-        return {
-            content: [{
-                type: "text",
-                text: `// TypeScript Interfaces for ${method.toUpperCase()} ${path}\n\n// --- Request Body ---\n${reqCode || "// No request body or non-JSON"}\n\n// --- Response (200) ---\n${resCode || "// No success response schema found"}`
-            }]
-        };
       }
 
       case "generate_curl": {
