@@ -1,6 +1,6 @@
 {
   "name": "@aike1202/swagger-mcp-server",
-  "version": "2.0.3",
+  "version": "1.0.1",
   "description": "A Model Context Protocol (MCP) server that turns any Swagger/OpenAPI documentation into AI-callable tools.",
   "type": "module",
   "bin": {
