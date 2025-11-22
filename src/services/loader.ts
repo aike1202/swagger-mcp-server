@@ -5,6 +5,8 @@ import { SwaggerDoc } from "../types/swagger.js";
 export class SwaggerLoader {
   private services: Map<string, string> = new Map();
   private cache: Map<string, SwaggerDoc> = new Map();
+  private cacheTimestamp: Map<string, number> = new Map();
+  private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
   private authToken: string | null = null;
   private credentials: { user: string; pass: string; loginPath?: string } | null = null;
 
@@ -84,14 +86,25 @@ export class SwaggerLoader {
     const docUrl = this.services.get(name)!;
     let doc: SwaggerDoc;
 
-    if (this.cache.has(name) && !forceRefresh) {
+    // Check Cache with TTL
+    const now = Date.now();
+    const timestamp = this.cacheTimestamp.get(name) || 0;
+    const isExpired = (now - timestamp) > this.CACHE_TTL;
+
+    if (this.cache.has(name) && !forceRefresh && !isExpired) {
       doc = this.cache.get(name)!;
     } else {
       try {
-        console.error(`Fetching Swagger docs for '${name}' from ${docUrl}...`);
+        if (isExpired && this.cache.has(name)) {
+            console.error(`[Cache] Doc for '${name}' expired. Refreshing...`);
+        } else {
+            console.error(`Fetching Swagger docs for '${name}' from ${docUrl}...`);
+        }
+        
         const response = await axios.get(docUrl);
         doc = response.data;
         this.cache.set(name, doc);
+        this.cacheTimestamp.set(name, now);
       } catch (error) {
         // Retry with 127.0.0.1 if localhost failed (Node 17+ IPv6 issue)
         if (docUrl.includes("localhost") && (error as any).code === "EACCES" || (error as any).code === "ECONNREFUSED") {
@@ -101,6 +114,7 @@ export class SwaggerLoader {
                 const response = await axios.get(ipv4Url);
                 doc = response.data;
                 this.cache.set(name, doc);
+                this.cacheTimestamp.set(name, now);
                 // Update service url to avoid future errors
                 this.services.set(name, ipv4Url);
             } catch (retryError) {

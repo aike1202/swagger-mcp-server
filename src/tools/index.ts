@@ -113,19 +113,25 @@ export function registerTools(server: Server, loader: SwaggerLoader) {
 
       case "list_endpoints": {
         const { doc, name } = await loader.getDoc(serviceNameArg);
-        const endpoints: string[] = [`Service: ${name}`];
+        const endpoints = [];
         for (const [path, methods] of Object.entries(doc.paths)) {
           for (const [method, details] of Object.entries(methods)) {
-            endpoints.push(`[${method.toUpperCase()}] ${path} - ${(details as any).summary || "No summary"}`);
+            endpoints.push({
+                service: name,
+                method: method.toUpperCase(),
+                path,
+                summary: (details as any).summary || "No summary",
+                description: (details as any).description ? (details as any).description.slice(0, 100) + "..." : undefined
+            });
           }
         }
-        return { content: [{ type: "text", text: endpoints.join("\n") }] };
+        return { content: [{ type: "text", text: JSON.stringify(endpoints, null, 2) }] };
       }
 
       case "search_apis": {
         const query = String(args.query).toLowerCase().trim();
         const terms = query.split(/\s+/).filter(t => t.length > 0);
-        const matches: { text: string; score: number }[] = [];
+        const matches: any[] = [];
         const servicesToSearch = serviceNameArg ? [serviceNameArg] : Array.from(loader.getServices().keys());
 
         for (const sName of servicesToSearch) {
@@ -157,7 +163,11 @@ export function registerTools(server: Server, loader: SwaggerLoader) {
                       if (score > 0) {
                           score += matchedTermCount * 20; 
                           matches.push({
-                              text: `[${sName}] [${method.toUpperCase()}] ${path} - ${details.summary || "No summary"}`,
+                              service: sName,
+                              method: method.toUpperCase(),
+                              path,
+                              summary: details.summary || "No summary",
+                              description: details.description ? details.description.slice(0, 200) : undefined,
                               score
                           });
                       }
@@ -170,9 +180,9 @@ export function registerTools(server: Server, loader: SwaggerLoader) {
         matches.sort((a, b) => b.score - a.score);
         
         // Limit results to avoid context overflow
-        const topMatches = matches.slice(0, 50).map(m => m.text);
+        const topMatches = matches.slice(0, 20);
 
-        return { content: [{ type: "text", text: topMatches.length > 0 ? topMatches.join("\n") : "No matching APIs found." }] };
+        return { content: [{ type: "text", text: JSON.stringify(topMatches, null, 2) }] };
       }
 
       case "get_endpoint_details": {
